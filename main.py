@@ -23,9 +23,11 @@ from livekit.agents import JobContext, WorkerOptions, cli, RoomInputOptions, met
 from livekit.agents.voice import Agent, AgentSession, MetricsCollectedEvent
 from livekit.plugins import openai, silero, deepgram, elevenlabs, google, noise_cancellation
 from livekit.agents.telemetry import set_tracer_provider
+from livekit import rtc
 
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.util.types import AttributeValue
+import jwt
 
 load_dotenv('.env')
 
@@ -59,10 +61,10 @@ def setup_langfuse(
     return trace_provider
 
 class SimpleAgent(Agent):
-    def __init__(self) -> None:
+    def __init__(self, user_name: str = "aluno") -> None:
         super().__init__(
-            instructions="""
-                Se apresente como Olá! Eu sou o Professor Mike, seu professor de inglês. Vou te ajudar a praticar conversação de forma divertida e educativa. Pergunte como ele gostaria de começar nossa aula de conversação.
+            instructions=f"""
+                Se apresente como: Olá {user_name}! Eu sou o Professor Mike, seu professor de inglês. Vou te ajudar a praticar conversação de forma divertida e educativa. Pergunte como ele gostaria de começar nossa aula de conversação. O nome do seu aluno é {user_name}. Use o nome dele para tornar a conversa mais pessoal.
             
                 Você é Professor Mike, um professor de inglês brasileiro experiente e muito paciente. \
                 REGRA FUNDAMENTAL: Quando o usuário fala em PORTUGUÊS, você DEVE responder em PORTUGUÊS primeiro, \
@@ -85,9 +87,31 @@ class SimpleAgent(Agent):
         self.session.generate_reply()
 
 async def entrypoint(ctx: JobContext):
+    await ctx.connect()
+
+    def get_user_info(participant: rtc.RemoteParticipant) -> dict:
+        if not participant.metadata:
+            return {"name": "aluno"}
+        
+        try:
+            decoded = jwt.decode(participant.metadata, options={"verify_signature": False})
+            return {
+                "name": decoded.get("given_name") or decoded.get("name", decoded.get("sub", "aluno")),
+                "email": decoded.get("preferred_username"),
+                "id": decoded.get("sub"),
+            }
+        except Exception as e:
+            logger.warning(f"Erro ao decodificar JWT: {e}")
+            return {"name": "aluno"}
+    
+    participant = await ctx.wait_for_participant()
+    user_info = get_user_info(participant)
+   
     trace_provider = setup_langfuse(
         metadata={
             "langfuse.session.id": ctx.room.name,
+            "langfuse.user.id": user_info.get("id") or user_info["name"],
+            "user.email": user_info.get("email") or "",
         }
     )
 
@@ -109,8 +133,9 @@ async def entrypoint(ctx: JobContext):
     def _on_metrics_collected(ev: MetricsCollectedEvent):
         metrics.log_metrics(ev.metrics)
 
+
     await session.start(
-        agent=SimpleAgent(),
+        agent=SimpleAgent(user_name=user_info["name"]),
         room_input_options=RoomInputOptions(
             noise_cancellation=noise_cancellation.BVC(),
         ),
