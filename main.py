@@ -11,8 +11,6 @@ import os
 import json
 import base64
 import asyncio
-import requests
-from pathlib import Path
 from dotenv import load_dotenv
 from livekit.agents import JobContext, WorkerOptions, cli, RoomInputOptions, metrics
 from livekit.agents.voice import Agent, AgentSession, MetricsCollectedEvent
@@ -22,14 +20,12 @@ from livekit import rtc
 
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.util.types import AttributeValue
-import jwt
 
 load_dotenv('.env')
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(levelname)s: %(message)s')
 logger = logging.getLogger("mike-voice-agent")
-logger.setLevel(logging.INFO)
-
-MIKE_B2C_API_URL = os.getenv("MIKE_B2C_API_URL", "http://localhost:3000")
+logger.setLevel(logging.DEBUG)
 
 
 def setup_langfuse(
@@ -60,79 +56,38 @@ def setup_langfuse(
 
 
 def parse_participant_metadata(participant: rtc.RemoteParticipant) -> dict:
-    """Parse the participant metadata JSON which contains session params and JWT."""
+    """Parse the participant metadata JSON which contains user, agentContext."""
+    logger.info(f"[METADATA] Participant identity: {participant.identity}")
+
     if not participant.metadata:
-        return {"name": "aluno"}
+        logger.warning("[METADATA] No metadata found on participant!")
+        return {}
 
     try:
         meta = json.loads(participant.metadata)
-    except (json.JSONDecodeError, TypeError):
-        # Fallback: try treating metadata as raw JWT (legacy format)
-        try:
-            decoded = jwt.decode(participant.metadata, options={"verify_signature": False})
-            return {
-                "name": decoded.get("given_name") or decoded.get("name", decoded.get("sub", "aluno")),
-                "email": decoded.get("preferred_username"),
-                "id": decoded.get("sub"),
-            }
-        except Exception:
-            return {"name": "aluno"}
+        logger.info(f"[METADATA] Parsed metadata keys: {list(meta.keys())}")
+    except (json.JSONDecodeError, TypeError) as e:
+        logger.error(f"[METADATA] Failed to parse metadata as JSON: {e}")
+        return {}
 
-    result = {
-        "topic": meta.get("topic", ""),
-        "avatar": meta.get("avatar", "mike"),
-        "lang": meta.get("lang", "en"),
-        "roleplay": meta.get("roleplay", ""),
-        "scenarioId": meta.get("scenarioId", ""),
-        "level": meta.get("level", ""),
-        "lesson": meta.get("lesson", ""),
-    }
+    result = {}
 
-    # Extract user info from the JWT inside the metadata
-    user_jwt = meta.get("jwt", "")
-    if user_jwt:
-        try:
-            decoded = jwt.decode(user_jwt, options={"verify_signature": False})
-            result["name"] = decoded.get("name") or decoded.get("given_name") or decoded.get("sub", "aluno")
-            result["email"] = decoded.get("email") or decoded.get("preferred_username", "")
-            result["id"] = decoded.get("userId") or decoded.get("sub", "")
-        except Exception as e:
-            logger.warning(f"Failed to decode JWT from metadata: {e}")
-            result["name"] = "aluno"
+    # Extract user info (set by livekit.js from the JWT)
+    user = meta.get("user", {})
+    result["name"] = user.get("name", "aluno")
+    result["email"] = user.get("email", "")
+    result["id"] = user.get("id", "")
+    logger.info(f"[METADATA] User: name={result['name']}, email={result['email']}, id={result['id']}")
+
+    # Extract agentContext (the full context built by the frontend)
+    agent_context = meta.get("agentContext")
+    if agent_context:
+        result["agentContext"] = agent_context
+        logger.info(f"[METADATA] agentContext found with keys: {list(agent_context.keys())}")
     else:
-        result["name"] = "aluno"
+        logger.warning("[METADATA] No agentContext in metadata!")
 
     return result
-
-
-def fetch_agent_context(params: dict) -> dict | None:
-    """Call the mike-b2c /api/agent-context endpoint to get the full instruction set."""
-    try:
-        query = {
-            "topic": params.get("topic", ""),
-            "avatar": params.get("avatar", "mike"),
-            "lang": params.get("lang", "en"),
-            "roleplay": "1" if params.get("roleplay") == "1" else "",
-            "scenarioId": params.get("scenarioId", ""),
-            "level": params.get("level", ""),
-            "lesson": params.get("lesson", ""),
-        }
-        url = f"{MIKE_B2C_API_URL}/api/agent-context"
-        logger.info(f"Fetching agent context from {url} with params: {query}")
-
-        resp = requests.get(url, params=query, timeout=10)
-        if resp.status_code == 200:
-            data = resp.json()
-            logger.info(f"Agent context received: voice={data.get('voice')}, "
-                       f"teacherName={data.get('teacherName')}, "
-                       f"instruction length={len(data.get('systemInstruction', ''))}")
-            return data
-        else:
-            logger.error(f"Agent context API returned {resp.status_code}: {resp.text}")
-            return None
-    except Exception as e:
-        logger.error(f"Failed to fetch agent context: {e}")
-        return None
 
 
 # Default fallback instruction when the API is unreachable
@@ -158,22 +113,17 @@ class MikeAgent(Agent):
 
 
 async def entrypoint(ctx: JobContext):
+
     await ctx.connect()
-
     participant = await ctx.wait_for_participant()
-    params = parse_participant_metadata(participant)
 
-    user_name = params.get("name", "aluno")
-    user_id = params.get("id") or user_name
-    user_email = params.get("email", "")
+    parsed = parse_participant_metadata(participant)
 
-    logger.info(f"Participant joined: name={user_name}, topic={params.get('topic')}, "
-                f"avatar={params.get('avatar')}, lang={params.get('lang')}, "
-                f"roleplay={params.get('roleplay')}, scenarioId={params.get('scenarioId')}, "
-                f"level={params.get('level')}, lesson={params.get('lesson')}")
+    user_name = parsed.get("name", "aluno")
+    user_id = parsed.get("id") or user_name
+    user_email = parsed.get("email", "")
+    context = parsed.get("agentContext")
 
-    # Fetch full context from mike-b2c API
-    context = fetch_agent_context(params)
 
     if context:
         system_instruction = context.get("systemInstruction", FALLBACK_INSTRUCTION)
@@ -181,16 +131,18 @@ async def entrypoint(ctx: JobContext):
         voice = context.get("voice", "Charon")
         timing_prompts = context.get("timingPrompts", {})
         lesson_duration = context.get("lessonDurationSec", 300)
+        logger.info(f"[ENTRYPOINT] Using frontend context: voice={voice}, instruction={len(system_instruction)} chars")
     else:
-        # Fallback to simple agent if API unavailable
         system_instruction = f"Se apresente como Professor Mike e comece uma aula para {user_name}.\n{FALLBACK_INSTRUCTION}"
         initial_message = ""
-        voice = "Charon" if params.get("avatar", "mike") != "nina" else "Zephyr"
+        voice = "Charon"
         timing_prompts = {}
         lesson_duration = 300
+        logger.warning(f"[ENTRYPOINT] No agentContext in metadata, using FALLBACK")
 
     # Personalize with user name
     system_instruction = system_instruction.replace("{userName}", user_name)
+    system_instruction += f"\n\nO NOME DO ALUNO É: {user_name}. REGRA OBRIGATÓRIA: Ao iniciar a conversa, SEMPRE cumprimente o aluno pelo nome (ex: \"Olá, {user_name}!\"). Use o nome dele ao longo da aula também."
 
     try:
         trace_provider = setup_langfuse(
@@ -205,9 +157,11 @@ async def entrypoint(ctx: JobContext):
             trace_provider.force_flush()
 
         ctx.add_shutdown_callback(flush_trace)
+        logger.info("[ENTRYPOINT] Langfuse tracing initialized")
     except Exception as e:
-        logger.warning(f"Langfuse setup failed (continuing without tracing): {e}")
+        logger.warning(f"[ENTRYPOINT] Langfuse setup failed (continuing without tracing): {e}")
 
+    logger.info(f"[ENTRYPOINT] Creating AgentSession with model=gemini-2.5-flash-native-audio-preview-09-2025, voice={voice}")
     session = AgentSession(
         llm=google.realtime.RealtimeModel(
             model="gemini-2.5-flash-native-audio-preview-09-2025",
@@ -220,6 +174,7 @@ async def entrypoint(ctx: JobContext):
     def _on_metrics_collected(ev: MetricsCollectedEvent):
         metrics.log_metrics(ev.metrics)
 
+    logger.info(f"[ENTRYPOINT] Starting agent session...")
     await session.start(
         agent=MikeAgent(
             instructions=system_instruction,
@@ -230,6 +185,7 @@ async def entrypoint(ctx: JobContext):
         ),
         room=ctx.room,
     )
+    logger.info(f"[ENTRYPOINT] Agent session started successfully!")
 
     # Schedule timing prompts (pronunciation warning, ending warning)
     async def send_timing_prompts():
@@ -243,20 +199,24 @@ async def entrypoint(ctx: JobContext):
             pron_delay = lesson_duration - pron_at
             end_delay = lesson_duration - end_at
 
+            logger.info(f"[TIMING] Scheduled: pronunciation warning at {pron_delay}s, ending warning at {end_delay}s (lesson={lesson_duration}s)")
+
             if pron_delay > 0 and pron_warning.get("message"):
                 await asyncio.sleep(pron_delay)
-                logger.info("Sending pronunciation warning")
+                logger.info("[TIMING] Sending pronunciation warning NOW")
                 session.generate_reply(instructions=pron_warning["message"])
 
             remaining_wait = end_delay - pron_delay
             if remaining_wait > 0 and end_warning.get("message"):
                 await asyncio.sleep(remaining_wait)
-                logger.info("Sending ending warning")
+                logger.info("[TIMING] Sending ending warning NOW")
                 session.generate_reply(instructions=end_warning["message"])
+
+            logger.info("[TIMING] All timing prompts sent")
         except asyncio.CancelledError:
-            pass
+            logger.info("[TIMING] Timing prompts cancelled (session ended)")
         except Exception as e:
-            logger.error(f"Timing prompt error: {e}")
+            logger.error(f"[TIMING] Error: {type(e).__name__}: {e}")
 
     asyncio.create_task(send_timing_prompts())
 
