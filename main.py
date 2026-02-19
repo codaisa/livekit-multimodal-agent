@@ -106,10 +106,9 @@ class MikeAgent(Agent):
         self._initial_message = initial_message
 
     async def on_enter(self):
-        if self._initial_message:
-            self.session.generate_reply(instructions=self._initial_message)
-        else:
-            self.session.generate_reply()
+        await asyncio.sleep(2)
+        logger.info("[MIKE AGENT] Triggering initial reply")
+        await self.session.generate_reply()
 
 
 async def entrypoint(ctx: JobContext):
@@ -140,9 +139,23 @@ async def entrypoint(ctx: JobContext):
         lesson_duration = 300
         logger.warning(f"[ENTRYPOINT] No agentContext in metadata, using FALLBACK")
 
-    # Personalize with user name
+    # Substitute placeholders in both instruction and initial message
     system_instruction = system_instruction.replace("{userName}", user_name)
+    system_instruction = system_instruction.replace("{nome usuario}", user_name)
+    system_instruction = system_instruction.replace("{baseInstruction}", "")
     system_instruction += f"\n\nO NOME DO ALUNO É: {user_name}. REGRA OBRIGATÓRIA: Ao iniciar a conversa, SEMPRE cumprimente o aluno pelo nome (ex: \"Olá, {user_name}!\"). Use o nome dele ao longo da aula também."
+
+    if initial_message:
+        initial_message = initial_message.replace("{userName}", user_name)
+        initial_message = initial_message.replace("{nome usuario}", user_name)
+        initial_message = initial_message.replace("{baseInstruction}", "")
+        # Embed the initial message directive into the system instruction so that
+        # generate_reply() (called without arguments) reliably triggers speech.
+        # Passing large text via generate_reply(instructions=...) is unreliable
+        # for Gemini Realtime because the audio pipeline may not be ready yet.
+        system_instruction += f"\n\n--- INSTRUÇÃO DE INÍCIO DE SESSÃO ---\n{initial_message}"
+        logger.info(f"[ENTRYPOINT] Initial message embedded into system instruction ({len(initial_message)} chars)")
+        initial_message = ""  # clear so on_enter calls generate_reply() with no args
 
     try:
         trace_provider = setup_langfuse(
@@ -180,9 +193,6 @@ async def entrypoint(ctx: JobContext):
             instructions=system_instruction,
             initial_message=initial_message,
         ),
-        room_input_options=RoomInputOptions(
-            noise_cancellation=noise_cancellation.BVC(),
-        ),
         room=ctx.room,
     )
     logger.info(f"[ENTRYPOINT] Agent session started successfully!")
@@ -204,13 +214,13 @@ async def entrypoint(ctx: JobContext):
             if pron_delay > 0 and pron_warning.get("message"):
                 await asyncio.sleep(pron_delay)
                 logger.info("[TIMING] Sending pronunciation warning NOW")
-                session.generate_reply(instructions=pron_warning["message"])
+                await session.generate_reply(instructions=pron_warning["message"])
 
             remaining_wait = end_delay - pron_delay
             if remaining_wait > 0 and end_warning.get("message"):
                 await asyncio.sleep(remaining_wait)
                 logger.info("[TIMING] Sending ending warning NOW")
-                session.generate_reply(instructions=end_warning["message"])
+                await session.generate_reply(instructions=end_warning["message"])
 
             logger.info("[TIMING] All timing prompts sent")
         except asyncio.CancelledError:
