@@ -106,7 +106,7 @@ class MikeAgent(Agent):
         self._initial_message = initial_message
 
     async def on_enter(self):
-        await asyncio.sleep(2)
+        await asyncio.sleep(1)
         logger.info("[MIKE AGENT] Triggering initial reply")
         await self.session.generate_reply()
 
