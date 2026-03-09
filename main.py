@@ -128,13 +128,15 @@ async def entrypoint(ctx: JobContext):
         system_instruction = context.get("systemInstruction", FALLBACK_INSTRUCTION)
         initial_message = context.get("initialMessage", "")
         voice = context.get("voice", "Charon")
+        target_lang = context.get("targetLang", "Inglês")
         timing_prompts = context.get("timingPrompts", {})
         lesson_duration = context.get("lessonDurationSec", 300)
-        logger.info(f"[ENTRYPOINT] Using frontend context: voice={voice}, instruction={len(system_instruction)} chars")
+        logger.info(f"[ENTRYPOINT] Using frontend context: voice={voice}, targetLang={target_lang}, instruction={len(system_instruction)} chars")
     else:
         system_instruction = f"Se apresente como Professor Mike e comece uma aula para {user_name}.\n{FALLBACK_INSTRUCTION}"
         initial_message = ""
         voice = "Charon"
+        target_lang = "Inglês"
         timing_prompts = {}
         lesson_duration = 300
         logger.warning(f"[ENTRYPOINT] No agentContext in metadata, using FALLBACK")
@@ -144,6 +146,7 @@ async def entrypoint(ctx: JobContext):
     system_instruction = system_instruction.replace("{nome usuario}", user_name)
     system_instruction = system_instruction.replace("{baseInstruction}", "")
     system_instruction += f"\n\nO NOME DO ALUNO É: {user_name}. REGRA OBRIGATÓRIA: Ao iniciar a conversa, SEMPRE cumprimente o aluno pelo nome (ex: \"Olá, {user_name}!\"). Use o nome dele ao longo da aula também."
+    system_instruction += f"\n\nIDIOMA-ALVO DA AULA: {target_lang}. Toda a aula deve focar exclusivamente no ensino de {target_lang}. Não mude o idioma-alvo sob nenhuma circunstância."
 
     if initial_message:
         initial_message = initial_message.replace("{userName}", user_name)
@@ -163,6 +166,7 @@ async def entrypoint(ctx: JobContext):
                 "langfuse.session.id": ctx.room.name,
                 "langfuse.user.id": user_id,
                 "user.email": user_email,
+                "target.language": target_lang,
             }
         )
 
