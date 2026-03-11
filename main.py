@@ -55,42 +55,6 @@ def setup_langfuse(
     return trace_provider
 
 
-def parse_participant_metadata(participant: rtc.RemoteParticipant) -> dict:
-    """Parse the participant metadata JSON which contains user, agentContext."""
-    logger.info(f"[METADATA] Participant identity: {participant.identity}")
-
-    if not participant.metadata:
-        logger.warning("[METADATA] No metadata found on participant!")
-        return {}
-
-    try:
-        meta = json.loads(participant.metadata)
-        logger.info(f"[METADATA] Parsed metadata keys: {list(meta.keys())}")
-    except (json.JSONDecodeError, TypeError) as e:
-        logger.error(f"[METADATA] Failed to parse metadata as JSON: {e}")
-        return {}
-
-    result = {}
-
-    # Extract user info (set by livekit.js from the JWT)
-    user = meta.get("user", {})
-    result["name"] = user.get("name", "aluno")
-    result["email"] = user.get("email", "")
-    result["id"] = user.get("id", "")
-    logger.info(f"[METADATA] User: name={result['name']}, email={result['email']}, id={result['id']}")
-
-    # Extract agentContext (the full context built by the frontend)
-    agent_context = meta.get("agentContext")
-    if agent_context:
-        result["agentContext"] = agent_context
-        logger.info(f"[METADATA] agentContext found with keys: {list(agent_context.keys())}")
-    else:
-        logger.warning("[METADATA] No agentContext in metadata!")
-
-    return result
-
-
-# Default fallback instruction when the API is unreachable
 FALLBACK_INSTRUCTION = """
 Você é o Professor Mike, um professor de inglês brasileiro experiente e muito paciente.
 REGRA FUNDAMENTAL: Quando o usuário fala em PORTUGUÊS, responda em PORTUGUÊS primeiro,
@@ -101,9 +65,8 @@ Estilo: claro, conciso, amigável; evite teoria longa; sempre feche com ação.
 
 
 class MikeAgent(Agent):
-    def __init__(self, instructions: str, initial_message: str = "") -> None:
+    def __init__(self, instructions: str) -> None:
         super().__init__(instructions=instructions)
-        self._initial_message = initial_message
 
     async def on_enter(self):
         await asyncio.sleep(1)
@@ -116,57 +79,42 @@ async def entrypoint(ctx: JobContext):
     await ctx.connect()
     participant = await ctx.wait_for_participant()
 
-    parsed = parse_participant_metadata(participant)
+    logger.info(f"[ENTRYPOINT] Participant identity: {participant.identity}")
 
-    user_name = parsed.get("name", "aluno")
-    user_id = parsed.get("id") or user_name
-    user_email = parsed.get("email", "")
-    context = parsed.get("agentContext")
+    # ── Parse metadata ──────────────────────────────────────
+    meta = {}
+    if participant.metadata:
+        try:
+            meta = json.loads(participant.metadata)
+            logger.info(f"[METADATA] Parsed keys: {list(meta.keys())}")
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.error(f"[METADATA] Failed to parse: {e}")
 
+    user = meta.get("user", {})
+    user_name = user.get("name", "aluno")
+    user_id = user.get("id") or user_name
+    user_email = user.get("email", "")
 
-    if context:
-        system_instruction = context.get("systemInstruction", FALLBACK_INSTRUCTION)
-        initial_message = context.get("initialMessage", "")
-        voice = context.get("voice", "Charon")
-        target_lang = context.get("targetLang", "Inglês")
-        timing_prompts = context.get("timingPrompts", {})
-        lesson_duration = context.get("lessonDurationSec", 300)
-        logger.info(f"[ENTRYPOINT] Using frontend context: voice={voice}, targetLang={target_lang}, instruction={len(system_instruction)} chars")
+    agent_context = meta.get("agentContext", "")
+    lesson_duration = meta.get("lessonDurationSec", 300)
+
+    # ── Build system instruction ────────────────────────────
+    if agent_context:
+        system_instruction = agent_context
+        logger.info(f"[ENTRYPOINT] agentContext received ({len(system_instruction)} chars)")
     else:
-        system_instruction = f"Se apresente como Professor Mike e comece uma aula para {user_name}.\n{FALLBACK_INSTRUCTION}"
-        initial_message = ""
-        voice = "Charon"
-        target_lang = "Inglês"
-        timing_prompts = {}
-        lesson_duration = 300
-        logger.warning(f"[ENTRYPOINT] No agentContext in metadata, using FALLBACK")
+        system_instruction = FALLBACK_INSTRUCTION
+        logger.warning("[ENTRYPOINT] No agentContext — using FALLBACK")
 
-    # Substitute placeholders in both instruction and initial message
-    system_instruction = system_instruction.replace("{userName}", user_name)
-    system_instruction = system_instruction.replace("{nome usuario}", user_name)
-    system_instruction = system_instruction.replace("{baseInstruction}", "")
-    system_instruction += f"\n\nO NOME DO ALUNO É: {user_name}. REGRA OBRIGATÓRIA: Ao iniciar a conversa, SEMPRE cumprimente o aluno pelo nome (ex: \"Olá, {user_name}!\"). Use o nome dele ao longo da aula também."
-    system_instruction += f"\n\nIDIOMA-ALVO DA AULA: {target_lang}. Toda a aula deve focar exclusivamente no ensino de {target_lang}. Não mude o idioma-alvo sob nenhuma circunstância."
+    logger.info(f"[ENTRYPOINT] user={user_name}, duration={lesson_duration}s")
 
-    if initial_message:
-        initial_message = initial_message.replace("{userName}", user_name)
-        initial_message = initial_message.replace("{nome usuario}", user_name)
-        initial_message = initial_message.replace("{baseInstruction}", "")
-        # Embed the initial message directive into the system instruction so that
-        # generate_reply() (called without arguments) reliably triggers speech.
-        # Passing large text via generate_reply(instructions=...) is unreliable
-        # for Gemini Realtime because the audio pipeline may not be ready yet.
-        system_instruction += f"\n\n--- INSTRUÇÃO DE INÍCIO DE SESSÃO ---\n{initial_message}"
-        logger.info(f"[ENTRYPOINT] Initial message embedded into system instruction ({len(initial_message)} chars)")
-        initial_message = ""  # clear so on_enter calls generate_reply() with no args
-
+    # ── Langfuse tracing ────────────────────────────────────
     try:
         trace_provider = setup_langfuse(
             metadata={
                 "langfuse.session.id": ctx.room.name,
                 "langfuse.user.id": user_id,
                 "user.email": user_email,
-                "target.language": target_lang,
             }
         )
 
@@ -178,11 +126,11 @@ async def entrypoint(ctx: JobContext):
     except Exception as e:
         logger.warning(f"[ENTRYPOINT] Langfuse setup failed (continuing without tracing): {e}")
 
-    logger.info(f"[ENTRYPOINT] Creating AgentSession with model=gemini-2.5-flash-native-audio-preview-09-2025, voice={voice}")
+    # ── Create and start agent session ──────────────────────
     session = AgentSession(
         llm=google.realtime.RealtimeModel(
             model="gemini-2.5-flash-native-audio-preview-09-2025",
-            voice=voice,
+            voice="Charon",
             temperature=0.8,
         )
     )
@@ -191,48 +139,12 @@ async def entrypoint(ctx: JobContext):
     def _on_metrics_collected(ev: MetricsCollectedEvent):
         metrics.log_metrics(ev.metrics)
 
-    logger.info(f"[ENTRYPOINT] Starting agent session...")
+    logger.info("[ENTRYPOINT] Starting agent session...")
     await session.start(
-        agent=MikeAgent(
-            instructions=system_instruction,
-            initial_message=initial_message,
-        ),
+        agent=MikeAgent(instructions=system_instruction),
         room=ctx.room,
     )
-    logger.info(f"[ENTRYPOINT] Agent session started successfully!")
-
-    # Schedule timing prompts (pronunciation warning, ending warning)
-    async def send_timing_prompts():
-        try:
-            pron_warning = timing_prompts.get("pronunciationWarning", {})
-            end_warning = timing_prompts.get("endingWarning", {})
-
-            pron_at = pron_warning.get("atSecRemaining", 60)
-            end_at = end_warning.get("atSecRemaining", 10)
-
-            pron_delay = lesson_duration - pron_at
-            end_delay = lesson_duration - end_at
-
-            logger.info(f"[TIMING] Scheduled: pronunciation warning at {pron_delay}s, ending warning at {end_delay}s (lesson={lesson_duration}s)")
-
-            if pron_delay > 0 and pron_warning.get("message"):
-                await asyncio.sleep(pron_delay)
-                logger.info("[TIMING] Sending pronunciation warning NOW")
-                await session.generate_reply(instructions=pron_warning["message"])
-
-            remaining_wait = end_delay - pron_delay
-            if remaining_wait > 0 and end_warning.get("message"):
-                await asyncio.sleep(remaining_wait)
-                logger.info("[TIMING] Sending ending warning NOW")
-                await session.generate_reply(instructions=end_warning["message"])
-
-            logger.info("[TIMING] All timing prompts sent")
-        except asyncio.CancelledError:
-            logger.info("[TIMING] Timing prompts cancelled (session ended)")
-        except Exception as e:
-            logger.error(f"[TIMING] Error: {type(e).__name__}: {e}")
-
-    asyncio.create_task(send_timing_prompts())
+    logger.info("[ENTRYPOINT] Agent session started successfully!")
 
 
 if __name__ == "__main__":
