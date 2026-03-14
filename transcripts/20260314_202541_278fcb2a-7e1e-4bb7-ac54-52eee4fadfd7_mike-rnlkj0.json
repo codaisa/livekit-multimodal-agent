@@ -1,0 +1,174 @@
+{
+  "job_id": "AJ_8PNQ76G49FvE",
+  "room_id": "RM_i3SdVx4E72iR",
+  "room": "mike-rnlkj0",
+  "events": [
+    {
+      "type": "agent_state_changed",
+      "old_state": "initializing",
+      "new_state": "listening",
+      "created_at": 1773519885.906382
+    },
+    {
+      "type": "speech_created",
+      "user_initiated": true,
+      "source": "generate_reply",
+      "created_at": 1773519886.906543
+    },
+    {
+      "type": "agent_state_changed",
+      "old_state": "listening",
+      "new_state": "speaking",
+      "created_at": 1773519890.222294
+    },
+    {
+      "type": "agent_state_changed",
+      "old_state": "speaking",
+      "new_state": "listening",
+      "created_at": 1773519910.977342
+    },
+    {
+      "type": "conversation_item_added",
+      "item": {
+        "id": "GR_42c525effcac",
+        "type": "message",
+        "role": "assistant",
+        "content": [
+          "E aí, Sá! Tudo bem? Vamos começar a nossa aula de inglês hoje! Hoje vamos falar sobre habilidades, sobre as coisas que você consegue fazer. Em inglês, usamos a palavra \"can\" para isso. Por exemplo, \"I can play games\" significa \"eu consigo jogar jogos\". Consegue repetir essa frase para mim?"
+        ],
+        "interrupted": false,
+        "transcript_confidence": null,
+        "extra": {},
+        "metrics": {
+          "started_speaking_at": 1773519890.222207,
+          "stopped_speaking_at": 1773519910.9776409
+        },
+        "created_at": 1773519890.222207,
+        "hash": null
+      },
+      "created_at": 1773519910.978065
+    },
+    {
+      "type": "user_state_changed",
+      "old_state": "listening",
+      "new_state": "speaking",
+      "created_at": 1773519914.351386
+    },
+    {
+      "type": "speech_created",
+      "user_initiated": false,
+      "source": "generate_reply",
+      "created_at": 1773519914.351424
+    },
+    {
+      "type": "user_input_transcribed",
+      "transcript": "I",
+      "is_final": false,
+      "speaker_id": null,
+      "language": null,
+      "created_at": 1773519914.351467
+    },
+    {
+      "type": "user_input_transcribed",
+      "transcript": "I can play games.",
+      "is_final": false,
+      "speaker_id": null,
+      "language": null,
+      "created_at": 1773519914.4721532
+    },
+    {
+      "type": "agent_state_changed",
+      "old_state": "listening",
+      "new_state": "speaking",
+      "created_at": 1773519915.526359
+    },
+    {
+      "type": "agent_state_changed",
+      "old_state": "speaking",
+      "new_state": "listening",
+      "created_at": 1773519921.809257
+    },
+    {
+      "type": "conversation_item_added",
+      "item": {
+        "id": "GR_510a71990714",
+        "type": "message",
+        "role": "assistant",
+        "content": [
+          "Perfeito! É assim mesmo! Agora, vamos pensar em outra habilidade. Você consegue nadar?"
+        ],
+        "interrupted": true,
+        "transcript_confidence": null,
+        "extra": {},
+        "metrics": {
+          "started_speaking_at": 1773519915.526311,
+          "stopped_speaking_at": 1773519921.809315
+        },
+        "created_at": 1773519915.526311,
+        "hash": null
+      },
+      "created_at": 1773519921.81249
+    },
+    {
+      "type": "close",
+      "error": null,
+      "reason": "participant_disconnected",
+      "created_at": 1773519922.04728
+    }
+  ],
+  "audio_recording_path": null,
+  "audio_recording_started_at": null,
+  "options": {
+    "allow_interruptions": true,
+    "discard_audio_if_uninterruptible": true,
+    "min_interruption_duration": 0.5,
+    "min_interruption_words": 0,
+    "min_endpointing_delay": 0.5,
+    "max_endpointing_delay": 3.0,
+    "max_tool_steps": 3,
+    "user_away_timeout": 15.0,
+    "min_consecutive_speech_delay": 0.0,
+    "preemptive_generation": false
+  },
+  "chat_history": {
+    "items": [
+      {
+        "id": "item_8b142763d3e5",
+        "type": "agent_handoff",
+        "new_agent_id": "mike_agent",
+        "created_at": 1773519885.867106
+      },
+      {
+        "id": "GR_42c525effcac",
+        "type": "message",
+        "role": "assistant",
+        "content": [
+          "E aí, Sá! Tudo bem? Vamos começar a nossa aula de inglês hoje! Hoje vamos falar sobre habilidades, sobre as coisas que você consegue fazer. Em inglês, usamos a palavra \"can\" para isso. Por exemplo, \"I can play games\" significa \"eu consigo jogar jogos\". Consegue repetir essa frase para mim?"
+        ],
+        "interrupted": false,
+        "extra": {},
+        "metrics": {
+          "started_speaking_at": 1773519890.222207,
+          "stopped_speaking_at": 1773519910.9776409
+        },
+        "created_at": 1773519890.222207
+      },
+      {
+        "id": "GR_510a71990714",
+        "type": "message",
+        "role": "assistant",
+        "content": [
+          "Perfeito! É assim mesmo! Agora, vamos pensar em outra habilidade. Você consegue nadar?"
+        ],
+        "interrupted": true,
+        "extra": {},
+        "metrics": {
+          "started_speaking_at": 1773519915.526311,
+          "stopped_speaking_at": 1773519921.809315
+        },
+        "created_at": 1773519915.526311
+      }
+    ]
+  },
+  "timestamp": 1773519941.923202
+}

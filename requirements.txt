@@ -2,6 +2,7 @@ livekit-agents[openai,silero,turn-detector,deepgram,google,anthropic,cartesia,el
 livekit-plugins-aws[realtime]
 livekit-plugins-noise-cancellation
 python-dotenv
+aiohttp
 requests>=2.32.0
 annoy
 pydantic

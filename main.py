@@ -11,6 +11,8 @@ import os
 import json
 import base64
 import asyncio
+import aiohttp
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 from livekit.agents import JobContext, WorkerOptions, cli, RoomInputOptions, metrics
 from livekit.agents.voice import Agent, AgentSession, MetricsCollectedEvent
@@ -55,6 +57,9 @@ def setup_langfuse(
     return trace_provider
 
 
+MIKE_B2C_URL = os.getenv("MIKE_B2C_URL", "http://localhost:3000")
+MIKE_INTERNAL_API_KEY = os.getenv("MIKE_INTERNAL_API_KEY", "")
+
 FALLBACK_INSTRUCTION = """
 Você é o Professor Mike, um professor de inglês brasileiro experiente e muito paciente.
 REGRA FUNDAMENTAL: Quando o usuário fala em PORTUGUÊS, responda em PORTUGUÊS primeiro,
@@ -62,7 +67,6 @@ depois convide para praticar em inglês. Quando o usuário fala em INGLÊS, resp
 CORREÇÃO ATIVA: Você SEMPRE identifica e corrige erros de pronúncia, gramática ou vocabulário.
 Estilo: claro, conciso, amigável; evite teoria longa; sempre feche com ação.
 """
-
 
 class MikeAgent(Agent):
     def __init__(self, instructions: str) -> None:
@@ -92,11 +96,22 @@ async def entrypoint(ctx: JobContext):
 
     user = meta.get("user", {})
     user_name = user.get("name", "aluno")
-    user_id = user.get("id") or user_name
+    user_id = user.get("id")
     user_email = user.get("email", "")
+    logger.info(f"[METADATA] user={user}")
+
+    # Reject sessions without valid metadata (e.g. SIP scanners)
+    if not user_id or not meta.get("agentContext"):
+        logger.warning(f"[ENTRYPOINT] Rejecting session — no user_id or agentContext (identity={participant.identity})")
+        ctx.shutdown("unauthorized")
+        return
 
     agent_context = meta.get("agentContext", "")
     lesson_duration = meta.get("lessonDurationSec", 300)
+    language = meta.get("language")
+    lesson_id = meta.get("lessonId")
+    lesson_attempt_id = meta.get("lessonAttemptId")
+    roleplay_scenario_id = meta.get("roleplayScenarioId")
 
     # ── Build system instruction ────────────────────────────
     if agent_context:
@@ -138,6 +153,46 @@ async def entrypoint(ctx: JobContext):
     @session.on("metrics_collected")
     def _on_metrics_collected(ev: MetricsCollectedEvent):
         metrics.log_metrics(ev.metrics)
+
+    # ── Save transcript on session end ──────────────────────
+    async def on_session_end(reason: str) -> None:
+        logger.info(f"[TRANSCRIPT] Session ended, reason: {reason}")
+        try:
+            report = ctx.make_session_report()
+            report_dict = report.to_dict()
+
+            # Send to mike-b2c API
+            if MIKE_INTERNAL_API_KEY and user_id:
+                url = f"{MIKE_B2C_URL}/api/conversation/session"
+                payload = {
+                    "report": report_dict,
+                    "userId": user_id,
+                    "roomName": ctx.room.name,
+                    "language": language,
+                    "lessonAttemptId": lesson_attempt_id,
+                    "roleplayScenarioId": roleplay_scenario_id,
+                }
+                async with aiohttp.ClientSession() as http:
+                    async with http.post(
+                        url,
+                        json=payload,
+                        headers={"X-Api-Key": MIKE_INTERNAL_API_KEY},
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ) as resp:
+                        body = await resp.json()
+                        if resp.status == 200:
+                            logger.info(f"[TRANSCRIPT] Sent to mike-b2c: {body}")
+                        else:
+                            logger.error(f"[TRANSCRIPT] mike-b2c responded {resp.status}: {body}")
+            else:
+                if not MIKE_INTERNAL_API_KEY:
+                    logger.warning("[TRANSCRIPT] MIKE_INTERNAL_API_KEY not set, skipping API send")
+                elif not user_id:
+                    logger.warning("[TRANSCRIPT] No user_id in metadata, skipping API send")
+        except Exception as e:
+            logger.error(f"[TRANSCRIPT] Failed to save: {e}")
+
+    ctx.add_shutdown_callback(on_session_end)
 
     logger.info("[ENTRYPOINT] Starting agent session...")
     await session.start(
