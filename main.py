@@ -57,8 +57,8 @@ def setup_langfuse(
     return trace_provider
 
 
-MIKE_B2C_URL = os.getenv("MIKE_B2C_URL", "http://localhost:3000")
-MIKE_INTERNAL_API_KEY = os.getenv("MIKE_INTERNAL_API_KEY", "")
+MIKE_B2C_URL = os.getenv("MIKE_B2C_URL", "https://app.falamike.com")
+MIKE_INTERNAL_API_KEY = os.getenv("MIKE_INTERNAL_API_KEY", "uma-chave-secreta-qualquer-aqui")
 
 FALLBACK_INSTRUCTION = """
 Você é o Professor Mike, um professor de inglês brasileiro experiente e muito paciente.
