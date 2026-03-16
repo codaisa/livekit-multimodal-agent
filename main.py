@@ -108,6 +108,7 @@ async def entrypoint(ctx: JobContext):
 
     agent_context = meta.get("agentContext", "")
     lesson_duration = meta.get("lessonDurationSec", 300)
+    voice = meta.get("voice", "Charon")
     language = meta.get("language")
     lesson_id = meta.get("lessonId")
     lesson_attempt_id = meta.get("lessonAttemptId")
@@ -142,10 +143,11 @@ async def entrypoint(ctx: JobContext):
         logger.warning(f"[ENTRYPOINT] Langfuse setup failed (continuing without tracing): {e}")
 
     # ── Create and start agent session ──────────────────────
+    logger.info(f"[ENTRYPOINT] voice={voice}")
     session = AgentSession(
         llm=google.realtime.RealtimeModel(
             model="gemini-2.5-flash-native-audio-preview-09-2025",
-            voice="Charon",
+            voice=voice,
             temperature=0.8,
         )
     )
