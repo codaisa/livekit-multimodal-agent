@@ -113,6 +113,7 @@ async def entrypoint(ctx: JobContext):
     lesson_id = meta.get("lessonId")
     lesson_attempt_id = meta.get("lessonAttemptId")
     roleplay_scenario_id = meta.get("roleplayScenarioId")
+    conversation_session_id = meta.get("conversationSessionId")
 
     # ── Build system instruction ────────────────────────────
     if agent_context:
@@ -173,6 +174,7 @@ async def entrypoint(ctx: JobContext):
                     "language": language,
                     "lessonAttemptId": lesson_attempt_id,
                     "roleplayScenarioId": roleplay_scenario_id,
+                    "conversationSessionId": conversation_session_id,
                 }
                 async with aiohttp.ClientSession() as http:
                     async with http.post(
