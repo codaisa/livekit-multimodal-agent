@@ -14,9 +14,9 @@ import asyncio
 import aiohttp
 from datetime import datetime, timezone
 from dotenv import load_dotenv
-from livekit.agents import JobContext, WorkerOptions, cli, RoomInputOptions, metrics
+from livekit.agents import JobContext, JobProcess, WorkerOptions, cli, RoomInputOptions, metrics
 from livekit.agents.voice import Agent, AgentSession, MetricsCollectedEvent
-from livekit.plugins import openai, silero, deepgram, elevenlabs, google, noise_cancellation
+from livekit.plugins import openai, silero, deepgram, elevenlabs, google
 from livekit.agents.telemetry import set_tracer_provider
 from livekit import rtc
 
@@ -28,6 +28,26 @@ load_dotenv('.env')
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(levelname)s: %(message)s')
 logger = logging.getLogger("mike-voice-agent")
 logger.setLevel(logging.DEBUG)
+
+
+# ═══════════════════════════════════════════════════════════════
+# PREWARM — roda uma vez por processo idle, ANTES de qualquer job
+# ═══════════════════════════════════════════════════════════════
+def prewarm(proc: JobProcess):
+    """
+    Pré-carrega módulos pesados no processo idle para que,
+    quando um job chegar, não haja custo de import.
+    """
+    logger.info("[PREWARM] Pre-importing heavy modules...")
+
+    # Força import dos módulos que demoram mais no primeiro load
+    import google.genai  # noqa: F401
+    from livekit.plugins import google as _google_plugin  # noqa: F401
+    import aiohttp  # noqa: F401
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter  # noqa: F401
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor  # noqa: F401
+
+    logger.info("[PREWARM] Process warmed up and ready!")
 
 
 def setup_langfuse(
@@ -73,26 +93,20 @@ class MikeAgent(Agent):
         super().__init__(instructions=instructions)
 
     async def on_enter(self):
-        await asyncio.sleep(1)
         logger.info("[MIKE AGENT] Triggering initial reply")
         await self.session.generate_reply()
 
 
 async def entrypoint(ctx: JobContext):
 
-    await ctx.connect()
-    participant = await ctx.wait_for_participant()
-
-    logger.info(f"[ENTRYPOINT] Participant identity: {participant.identity}")
-
-    # ── Parse metadata ──────────────────────────────────────
+    # ── Parse metadata from job dispatch (available immediately) ──
     meta = {}
-    if participant.metadata:
+    if ctx.job.metadata:
         try:
-            meta = json.loads(participant.metadata)
-            logger.info(f"[METADATA] Parsed keys: {list(meta.keys())}")
+            meta = json.loads(ctx.job.metadata)
+            logger.info(f"[METADATA] Parsed keys from job: {list(meta.keys())}")
         except (json.JSONDecodeError, TypeError) as e:
-            logger.error(f"[METADATA] Failed to parse: {e}")
+            logger.error(f"[METADATA] Failed to parse job metadata: {e}")
 
     user = meta.get("user", {})
     user_name = user.get("name", "aluno")
@@ -102,7 +116,7 @@ async def entrypoint(ctx: JobContext):
 
     # Reject sessions without valid metadata (e.g. SIP scanners)
     if not user_id or not meta.get("agentContext"):
-        logger.warning(f"[ENTRYPOINT] Rejecting session — no user_id or agentContext (identity={participant.identity})")
+        logger.warning(f"[ENTRYPOINT] Rejecting session — no user_id or agentContext")
         ctx.shutdown("unauthorized")
         return
 
@@ -123,13 +137,13 @@ async def entrypoint(ctx: JobContext):
         system_instruction = FALLBACK_INSTRUCTION
         logger.warning("[ENTRYPOINT] No agentContext — using FALLBACK")
 
-    logger.info(f"[ENTRYPOINT] user={user_name}, duration={lesson_duration}s")
+    logger.info(f"[ENTRYPOINT] user={user_name}, duration={lesson_duration}s, voice={voice}")
 
     # ── Langfuse tracing ────────────────────────────────────
     try:
         trace_provider = setup_langfuse(
             metadata={
-                "langfuse.session.id": ctx.room.name,
+                "langfuse.session.id": ctx.job.room.name,
                 "langfuse.user.id": user_id,
                 "user.email": user_email,
             }
@@ -143,11 +157,10 @@ async def entrypoint(ctx: JobContext):
     except Exception as e:
         logger.warning(f"[ENTRYPOINT] Langfuse setup failed (continuing without tracing): {e}")
 
-    # ── Create and start agent session ──────────────────────
-    logger.info(f"[ENTRYPOINT] voice={voice}")
+    # ── Create agent session BEFORE connecting ──────────────
     session = AgentSession(
         llm=google.realtime.RealtimeModel(
-            model="gemini-2.5-flash-native-audio-preview-09-2025",
+            model="gemini-2.5-flash-native-audio-preview-12-2025",
             voice=voice,
             temperature=0.8,
         )
@@ -198,7 +211,11 @@ async def entrypoint(ctx: JobContext):
 
     ctx.add_shutdown_callback(on_session_end)
 
-    logger.info("[ENTRYPOINT] Starting agent session...")
+    # ── Connect and start immediately ───────────────────────
+    logger.info("[ENTRYPOINT] Connecting to room...")
+    await ctx.connect()
+    logger.info("[ENTRYPOINT] Connected! Starting agent session...")
+
     await session.start(
         agent=MikeAgent(instructions=system_instruction),
         room=ctx.room,
@@ -207,4 +224,11 @@ async def entrypoint(ctx: JobContext):
 
 
 if __name__ == "__main__":
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
+    cli.run_app(
+        WorkerOptions(
+            entrypoint_fnc=entrypoint,
+            prewarm_fnc=prewarm,
+            num_idle_processes=3,
+            agent_name="mike-agent",
+        )
+    )
