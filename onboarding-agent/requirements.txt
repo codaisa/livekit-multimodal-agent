@@ -1,0 +1,4 @@
+livekit-agents[google]
+livekit-plugins-noise-cancellation
+python-dotenv
+aiohttp

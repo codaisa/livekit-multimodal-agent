@@ -1,0 +1,16 @@
+services:
+  mike-agent:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    network_mode: host
+    env_file: .env
+    restart: unless-stopped
+
+  onboarding-agent:
+    build:
+      context: ./onboarding-agent
+      dockerfile: Dockerfile
+    network_mode: host
+    env_file: .env
+    restart: unless-stopped

@@ -14,7 +14,7 @@ import asyncio
 import aiohttp
 from datetime import datetime, timezone
 from dotenv import load_dotenv
-from livekit.agents import JobContext, JobProcess, WorkerOptions, cli, RoomInputOptions, metrics
+from livekit.agents import JobContext, JobProcess, WorkerOptions, cli, RoomInputOptions, room_io, metrics
 from livekit.agents.voice import Agent, AgentSession, MetricsCollectedEvent
 from livekit.plugins import openai, silero, deepgram, elevenlabs, google
 from livekit.agents.telemetry import set_tracer_provider
@@ -23,7 +23,7 @@ from livekit import rtc
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.util.types import AttributeValue
 
-load_dotenv('.env')
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(levelname)s: %(message)s')
 logger = logging.getLogger("mike-voice-agent")
@@ -115,7 +115,9 @@ async def entrypoint(ctx: JobContext):
     logger.info(f"[METADATA] user={user}")
 
     # Reject sessions without valid metadata (e.g. SIP scanners)
-    if not user_id or not meta.get("agentContext"):
+    # Allow console mode (no metadata) for local testing
+    is_console = not ctx.job.metadata
+    if not is_console and (not user_id or not meta.get("agentContext")):
         logger.warning(f"[ENTRYPOINT] Rejecting session — no user_id or agentContext")
         ctx.shutdown("unauthorized")
         return
@@ -219,6 +221,9 @@ async def entrypoint(ctx: JobContext):
     await session.start(
         agent=MikeAgent(instructions=system_instruction),
         room=ctx.room,
+        room_options=room_io.RoomOptions(
+            video_input=True,
+        ),
     )
     logger.info("[ENTRYPOINT] Agent session started successfully!")
 
