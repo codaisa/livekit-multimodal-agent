@@ -22,7 +22,11 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(levelna
 logger = logging.getLogger("onboarding-agent")
 logger.setLevel(logging.DEBUG)
 
+VERSION = "0.1.0"
+
 SESSION_DURATION_SEC = 60
+
+logger.info(f"🚀 onboarding-agent v{VERSION} loaded")
 
 MIKE_B2C_URL = os.getenv("MIKE_B2C_URL", "https://app.falamike.com")
 MIKE_INTERNAL_API_KEY = os.getenv("MIKE_INTERNAL_API_KEY", "uma-chave-secreta-qualquer-aqui")
@@ -41,16 +45,19 @@ REGRAS DE TEMPO:
 - Você tem cerca de 20 segundos para cada pergunta (pergunta + resposta do aluno + seu comentário).
 - Se o aluno estiver sendo breve demais, explore mais a resposta dele com follow-ups curtos.
 - Se o aluno estiver falando demais, gentilmente reconheça e avance para a próxima pergunta.
-- Nos últimos ~10 segundos, encerre a conversa com uma frase motivacional.
 
 REGRAS GERAIS:
 - Fale em PORTUGUÊS (o aluno ainda não pratica inglês nesta etapa).
 - Seja natural, NÃO faça as 3 perguntas de uma vez. Conduza como uma conversa real.
 - Depois de cada resposta, faça um breve comentário positivo antes de prosseguir.
-- Quando já tiver as 3 informações, encerre com uma frase motivacional curta, tipo:
-  "Massa! Agora a gente vai montar um plano perfeito pra você. Bora começar?"
 - Seja breve nas suas falas — máximo 2-3 frases por vez.
 - NÃO corrija inglês nesta etapa — isso é só onboarding.
+
+REGRA OBRIGATÓRIA DE ENCERRAMENTO:
+- Quando você já tiver coletado as 3 informações (nome, interesses e bloqueios), ou quando sentir que o tempo está acabando, você DEVE encerrar a conversa.
+- A frase de encerramento DEVE OBRIGATORIAMENTE conter as palavras exatas "Bora começar" — isso é um gatilho técnico que o sistema usa para detectar o fim da conversa.
+- Exemplo: "Massa! Agora a gente vai montar um plano perfeito pra você. Bora começar?"
+- NUNCA termine a conversa sem dizer "Bora começar". Isso é CRÍTICO para o funcionamento do sistema.
 """
 
 
