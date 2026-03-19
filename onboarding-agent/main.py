@@ -9,6 +9,7 @@ tags: [education, onboarding, livekit, voice-agent]
 import logging
 import os
 import json
+import asyncio
 import aiohttp
 from dotenv import load_dotenv
 from livekit.agents import JobContext, JobProcess, WorkerOptions, cli, room_io
@@ -21,11 +22,12 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(levelna
 logger = logging.getLogger("onboarding-agent")
 logger.setLevel(logging.DEBUG)
 
+SESSION_DURATION_SEC = 60
 
 MIKE_B2C_URL = os.getenv("MIKE_B2C_URL", "https://app.falamike.com")
 MIKE_INTERNAL_API_KEY = os.getenv("MIKE_INTERNAL_API_KEY", "uma-chave-secreta-qualquer-aqui")
 
-ONBOARDING_INSTRUCTION = """
+ONBOARDING_INSTRUCTION = f"""
 Você é o Mike, um professor de inglês super simpático e acolhedor.
 Você está conhecendo um novo aluno pela primeira vez. Sua missão é ter uma conversa leve e natural
 para descobrir três coisas sobre ele:
@@ -34,7 +36,14 @@ para descobrir três coisas sobre ele:
 2. **Interesses** — Descubra o que ele gosta de fazer, seus hobbies, o que o anima.
 3. **Bloqueios com inglês** — Entenda o que dificulta ou impede ele de aprender/falar inglês.
 
-REGRAS:
+REGRAS DE TEMPO:
+- Esta conversa deve durar EXATAMENTE {SESSION_DURATION_SEC} segundos (1 minuto).
+- Você tem cerca de 20 segundos para cada pergunta (pergunta + resposta do aluno + seu comentário).
+- Se o aluno estiver sendo breve demais, explore mais a resposta dele com follow-ups curtos.
+- Se o aluno estiver falando demais, gentilmente reconheça e avance para a próxima pergunta.
+- Nos últimos ~10 segundos, encerre a conversa com uma frase motivacional.
+
+REGRAS GERAIS:
 - Fale em PORTUGUÊS (o aluno ainda não pratica inglês nesta etapa).
 - Seja natural, NÃO faça as 3 perguntas de uma vez. Conduza como uma conversa real.
 - Depois de cada resposta, faça um breve comentário positivo antes de prosseguir.
@@ -129,6 +138,18 @@ async def entrypoint(ctx: JobContext):
 
     ctx.add_shutdown_callback(on_session_end)
 
+    # ── Hard timer: force shutdown after SESSION_DURATION_SEC ──
+    async def session_timer():
+        # Wait until 50s to inject a "wrap up" hint
+        await asyncio.sleep(SESSION_DURATION_SEC - 10)
+        logger.info("[TIMER] 10 seconds remaining — signaling agent to wrap up")
+        session.say("Bom, nosso tempo tá acabando! Foi ótimo te conhecer. Vou preparar tudo pra gente começar!")
+
+        # Wait the final 10 seconds, then force disconnect
+        await asyncio.sleep(10)
+        logger.info(f"[TIMER] {SESSION_DURATION_SEC}s reached — ending session")
+        ctx.shutdown("session_time_limit")
+
     # ── Connect and start ──
     logger.info("[ENTRYPOINT] Connecting to room...")
     await ctx.connect()
@@ -139,6 +160,9 @@ async def entrypoint(ctx: JobContext):
         room=ctx.room,
     )
     logger.info("[ENTRYPOINT] Onboarding agent session started!")
+
+    # Start the hard timer after session is running
+    asyncio.create_task(session_timer())
 
 
 if __name__ == "__main__":
