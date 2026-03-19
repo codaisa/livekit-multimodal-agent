@@ -93,6 +93,7 @@ async def entrypoint(ctx: JobContext):
     user_id = user.get("id")
     user_name = user.get("name", "aluno")
     voice = meta.get("voice", "Charon")
+    session_id = meta.get("sessionId")  # onboarding session ID from B2C
 
     # Allow console mode (no metadata) for local testing
     is_console = not ctx.job.metadata
@@ -101,7 +102,7 @@ async def entrypoint(ctx: JobContext):
         ctx.shutdown("unauthorized")
         return
 
-    logger.info(f"[ENTRYPOINT] Onboarding for user={user_name} (id={user_id}), voice={voice}")
+    logger.info(f"[ENTRYPOINT] Onboarding for user={user_name} (id={user_id}), voice={voice}, sessionId={session_id}")
 
     # ── Create agent session ──
     session = AgentSession(
@@ -119,18 +120,19 @@ async def entrypoint(ctx: JobContext):
             report = ctx.make_session_report()
             report_dict = report.to_dict()
 
-            if MIKE_INTERNAL_API_KEY and user_id:
-                url = f"{MIKE_B2C_URL}/api/onboarding/session"
+            if MIKE_INTERNAL_API_KEY and session_id:
+                url = f"{MIKE_B2C_URL}/api/onboarding/session/{session_id}/transcript"
                 payload = {
-                    "report": report_dict,
-                    "userId": user_id,
-                    "roomName": ctx.room.name,
+                    "chatHistory": report_dict.get("chat_history", []),
+                    "livekitRoomName": ctx.room.name,
+                    "livekitJobId": ctx.job.id,
+                    "durationSeconds": SESSION_DURATION_SEC,
                 }
                 async with aiohttp.ClientSession() as http:
                     async with http.post(
                         url,
                         json=payload,
-                        headers={"X-Api-Key": MIKE_INTERNAL_API_KEY},
+                        headers={"X-Agent-Key": MIKE_INTERNAL_API_KEY},
                         timeout=aiohttp.ClientTimeout(total=10),
                     ) as resp:
                         body = await resp.json()
@@ -139,7 +141,10 @@ async def entrypoint(ctx: JobContext):
                         else:
                             logger.error(f"[TRANSCRIPT] mike-b2c responded {resp.status}: {body}")
             else:
-                logger.warning("[TRANSCRIPT] Missing API key or user_id, skipping")
+                if not session_id:
+                    logger.warning("[TRANSCRIPT] No sessionId in metadata, skipping API send")
+                elif not MIKE_INTERNAL_API_KEY:
+                    logger.warning("[TRANSCRIPT] MIKE_INTERNAL_API_KEY not set, skipping API send")
         except Exception as e:
             logger.error(f"[TRANSCRIPT] Failed to save: {e}")
 
