@@ -22,7 +22,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(levelna
 logger = logging.getLogger("onboarding-agent")
 logger.setLevel(logging.DEBUG)
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 SESSION_DURATION_SEC = 60
 
@@ -31,7 +31,9 @@ logger.info(f"🚀 onboarding-agent v{VERSION} loaded")
 MIKE_B2C_URL = os.getenv("MIKE_B2C_URL", "https://app.falamike.com")
 MIKE_INTERNAL_API_KEY = os.getenv("MIKE_INTERNAL_API_KEY", "uma-chave-secreta-qualquer-aqui")
 
-ONBOARDING_INSTRUCTION = f"""
+# Fallback hard-coded usado apenas se o backend não enviar `agentContext`
+# na metadata (modo console ou erro ao buscar o prompt no banco).
+FALLBACK_ONBOARDING_INSTRUCTION = f"""
 Você é o Mike, um professor de inglês super simpático e acolhedor.
 Você está conhecendo um novo aluno pela primeira vez. Sua missão é ter uma conversa leve e natural
 para descobrir três coisas sobre ele:
@@ -94,6 +96,8 @@ async def entrypoint(ctx: JobContext):
     user_name = user.get("name", "aluno")
     voice = meta.get("voice", "Charon")
     session_id = meta.get("sessionId")  # onboarding session ID from B2C
+    tenant_id = meta.get("tenantId")
+    agent_context = meta.get("agentContext")
 
     # Allow console mode (no metadata) for local testing
     is_console = not ctx.job.metadata
@@ -101,6 +105,18 @@ async def entrypoint(ctx: JobContext):
         logger.warning("[ENTRYPOINT] Rejecting session — no user_id")
         ctx.shutdown("unauthorized")
         return
+
+    # Build system instruction: prefer the prompt sent by the backend
+    # (resolved from aiPrompt by tenant or global fallback). Cair no
+    # template hard-coded apenas quando vier vazio.
+    if agent_context:
+        system_instruction = agent_context
+        logger.info(
+            f"[ENTRYPOINT] agentContext received ({len(system_instruction)} chars, tenantId={tenant_id})"
+        )
+    else:
+        system_instruction = FALLBACK_ONBOARDING_INSTRUCTION
+        logger.warning("[ENTRYPOINT] No agentContext in metadata — using FALLBACK")
 
     logger.info(f"[ENTRYPOINT] Onboarding for user={user_name} (id={user_id}), voice={voice}, sessionId={session_id}")
 
@@ -168,7 +184,7 @@ async def entrypoint(ctx: JobContext):
     logger.info("[ENTRYPOINT] Connected! Starting onboarding session...")
 
     await session.start(
-        agent=OnboardingAgent(instructions=ONBOARDING_INSTRUCTION),
+        agent=OnboardingAgent(instructions=system_instruction),
         room=ctx.room,
     )
     logger.info("[ENTRYPOINT] Onboarding agent session started!")
