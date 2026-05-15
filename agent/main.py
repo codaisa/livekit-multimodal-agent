@@ -79,6 +79,9 @@ def setup_langfuse(
 
 MIKE_B2C_URL = os.getenv("MIKE_B2C_URL", "https://app.falamike.com")
 MIKE_INTERNAL_API_KEY = os.getenv("MIKE_INTERNAL_API_KEY", "uma-chave-secreta-qualquer-aqui")
+# Quando setado, o relatório vai pro mike-serverless (SQS) em vez do endpoint
+# síncrono em mike-b2c. Mantém fallback no path antigo durante o cutover.
+MIKE_REPORT_URL = os.getenv("MIKE_REPORT_URL")
 
 FALLBACK_INSTRUCTION = """
 Você é o Professor Mike, um professor de inglês brasileiro experiente e muito paciente.
@@ -179,9 +182,12 @@ async def entrypoint(ctx: JobContext):
             report = ctx.make_session_report()
             report_dict = report.to_dict()
 
-            # Send to mike-b2c API
+            # Send report. Se MIKE_REPORT_URL estiver setado, posta na fila
+            # do mike-serverless (que aceita 202). Caso contrário, vai direto
+            # pro endpoint síncrono antigo em mike-b2c (que retorna 200).
             if MIKE_INTERNAL_API_KEY and user_id:
-                url = f"{MIKE_B2C_URL}/api/conversation/session"
+                url = MIKE_REPORT_URL or f"{MIKE_B2C_URL}/api/conversation/session"
+                target = "mike-serverless" if MIKE_REPORT_URL else "mike-b2c"
                 payload = {
                     "report": report_dict,
                     "userId": user_id,
@@ -199,10 +205,10 @@ async def entrypoint(ctx: JobContext):
                         timeout=aiohttp.ClientTimeout(total=10),
                     ) as resp:
                         body = await resp.json()
-                        if resp.status == 200:
-                            logger.info(f"[TRANSCRIPT] Sent to mike-b2c: {body}")
+                        if resp.status in (200, 202):
+                            logger.info(f"[TRANSCRIPT] Sent to {target}: {body}")
                         else:
-                            logger.error(f"[TRANSCRIPT] mike-b2c responded {resp.status}: {body}")
+                            logger.error(f"[TRANSCRIPT] {target} responded {resp.status}: {body}")
             else:
                 if not MIKE_INTERNAL_API_KEY:
                     logger.warning("[TRANSCRIPT] MIKE_INTERNAL_API_KEY not set, skipping API send")
