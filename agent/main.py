@@ -83,7 +83,7 @@ MIKE_INTERNAL_API_KEY = os.getenv("MIKE_INTERNAL_API_KEY", "uma-chave-secreta-qu
 # síncrono em mike-b2c. Mantém fallback no path antigo durante o cutover.
 MIKE_REPORT_URL = os.getenv("MIKE_REPORT_URL")
 
-VERSION = "0.3.0-sqs"
+VERSION = "0.4.0-timer"
 logger.info(
     f"🚀 mike-voice-agent v{VERSION} loaded — "
     f"report target: {'mike-serverless (SQS) → ' + MIKE_REPORT_URL if MIKE_REPORT_URL else 'mike-b2c (legacy, direct)'}"
@@ -238,6 +238,51 @@ async def entrypoint(ctx: JobContext):
         ),
     )
     logger.info("[ENTRYPOINT] Agent session started successfully!")
+
+    # ── Hard timer: warning aos -20s, shutdown exato no tempo total ──
+    # Garante que a sessão dura EXATAMENTE lesson_duration. O prompt já
+    # instrui o agente a não se despedir antes — esse timer é a rede de
+    # segurança caso o modelo escape, e também controla o aviso de fim.
+    WRAP_UP_LEAD_TIME = 20  # segundos antes do shutdown para injetar aviso
+
+    async def session_timer():
+        try:
+            if lesson_duration > WRAP_UP_LEAD_TIME:
+                await asyncio.sleep(lesson_duration - WRAP_UP_LEAD_TIME)
+                logger.info(
+                    f"[TIMER] {WRAP_UP_LEAD_TIME}s remaining — injecting wrap-up signal"
+                )
+                try:
+                    session.say(
+                        "Beleza! Tô vendo aqui que tá chegando no fim do nosso tempo. "
+                        "Antes da gente encerrar, me conta uma última coisa..."
+                    )
+                except Exception as e:
+                    logger.warning(f"[TIMER] Failed to inject wrap-up say: {e}")
+                await asyncio.sleep(WRAP_UP_LEAD_TIME)
+            else:
+                await asyncio.sleep(lesson_duration)
+            logger.info(
+                f"[TIMER] {lesson_duration}s reached — forcing session shutdown"
+            )
+            ctx.shutdown("session_time_limit")
+        except asyncio.CancelledError:
+            logger.info("[TIMER] Cancelled (session ended early by participant/error)")
+            raise
+
+    timer_task = asyncio.create_task(session_timer())
+
+    # Cancela o timer se a sessão for encerrada antes do tempo (user saiu, erro, etc.)
+    async def cancel_timer_on_shutdown(reason: str) -> None:
+        if not timer_task.done():
+            timer_task.cancel()
+            logger.info(f"[TIMER] Cancelled due to early shutdown: reason={reason}")
+
+    ctx.add_shutdown_callback(cancel_timer_on_shutdown)
+    logger.info(
+        f"[TIMER] Session timer armed for {lesson_duration}s "
+        f"(warning at -{WRAP_UP_LEAD_TIME}s)"
+    )
 
 
 if __name__ == "__main__":
