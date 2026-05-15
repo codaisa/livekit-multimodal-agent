@@ -83,6 +83,12 @@ MIKE_INTERNAL_API_KEY = os.getenv("MIKE_INTERNAL_API_KEY", "uma-chave-secreta-qu
 # síncrono em mike-b2c. Mantém fallback no path antigo durante o cutover.
 MIKE_REPORT_URL = os.getenv("MIKE_REPORT_URL")
 
+VERSION = "0.3.0-sqs"
+logger.info(
+    f"🚀 mike-voice-agent v{VERSION} loaded — "
+    f"report target: {'mike-serverless (SQS) → ' + MIKE_REPORT_URL if MIKE_REPORT_URL else 'mike-b2c (legacy, direct)'}"
+)
+
 FALLBACK_INSTRUCTION = """
 Você é o Professor Mike, um professor de inglês brasileiro experiente e muito paciente.
 REGRA FUNDAMENTAL: Quando o usuário fala em PORTUGUÊS, responda em PORTUGUÊS primeiro,
