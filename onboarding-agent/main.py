@@ -12,7 +12,7 @@ import json
 import asyncio
 import aiohttp
 from dotenv import load_dotenv
-from livekit.agents import JobContext, JobProcess, WorkerOptions, cli, room_io
+from livekit.agents import JobContext, JobRequest, JobProcess, WorkerOptions, cli, room_io
 from livekit.agents.voice import Agent, AgentSession
 from livekit.plugins import google
 
@@ -193,10 +193,30 @@ async def entrypoint(ctx: JobContext):
     asyncio.create_task(session_timer())
 
 
+# ---------------------------------------------------------------- salas humanas
+# O mesmo servidor LiveKit atende as Salas do Academe Task (reuniões entre pessoas, prefixo
+# `task-`). Este worker já só recebe jobs por dispatch explícito (agent_name), mas recusa essas
+# salas mesmo assim: se algum token um dia pedir o agente numa sala humana por engano, o agente
+# não entra. Ver monday-main/docs/plano-salas-livekit.md (Fase 5).
+HUMAN_ROOM_PREFIXES = tuple(
+    p.strip() for p in os.getenv("HUMAN_ROOM_PREFIXES", "task-").split(",") if p.strip()
+)
+
+
+async def request_fnc(req: JobRequest) -> None:
+    room_name = req.room.name or ""
+    if HUMAN_ROOM_PREFIXES and room_name.startswith(HUMAN_ROOM_PREFIXES):
+        logger.warning(f"[DISPATCH] Rejecting job for human room {room_name}")
+        await req.reject()
+        return
+    await req.accept()
+
+
 if __name__ == "__main__":
     cli.run_app(
         WorkerOptions(
             entrypoint_fnc=entrypoint,
+            request_fnc=request_fnc,
             prewarm_fnc=prewarm,
             num_idle_processes=2,
             agent_name="onboarding-agent",

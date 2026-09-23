@@ -1,4 +1,4 @@
-livekit-agents[google]
+livekit-agents[google]==1.6.10
 livekit-plugins-noise-cancellation
 python-dotenv
 aiohttp
